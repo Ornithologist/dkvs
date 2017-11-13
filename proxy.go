@@ -53,9 +53,7 @@ type server struct {
     Port  int
 }
 
-var url1 string
 var servers []server
-var setReqs []setReqStruct
 
 func handler(w http.ResponseWriter, r *http.Request) {
 	endpoint := r.URL.Path
@@ -67,7 +65,6 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	case "/set":
 		handleSet(w, r)
 	}
-	return
 }
 
 func handleFetch(w http.ResponseWriter, r *http.Request) {
@@ -83,7 +80,6 @@ func handleFetch(w http.ResponseWriter, r *http.Request) {
 	
 	// call the server and extract result
 	myUrl := fmt.Sprintf("http://%s:%d/fetch?key=%s", myServer.Ip, myServer.Port, key)
-	fmt.Println(myUrl)
 	resp, err := http.Get(myUrl)
 	
 	if err != nil {
@@ -171,7 +167,6 @@ func handleError(w http.ResponseWriter, r *http.Request, errsp *errorResp) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(errsp.Code)
 	w.Write(js)
-	return
 }
 
 func makeServerReq(httpReq *http.Request) {
@@ -220,8 +215,6 @@ func loadServers() {
 		os.Exit(1)
 	}
 	json.Unmarshal(file, &servers)
-	fmt.Printf("%+v\n", servers);
-	fmt.Printf("hi %d\n", servers[0].Port)
 }
 
 func loadSetRequest(jsonBytes []byte) []setReqStruct {
