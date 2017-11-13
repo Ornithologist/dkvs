@@ -54,6 +54,11 @@ type clientQueryReq struct {
 	Key clientReq
 }
 
+type clientSetResp struct {
+	keys_added  int
+	keys_failed []string
+}
+
 var servers []server
 
 func handler(w http.ResponseWriter, r *http.Request) {
@@ -141,15 +146,15 @@ func handleSet(w http.ResponseWriter, r *http.Request) {
 	serverRespMap := make(map[int][]serverResp)
 	var wg sync.WaitGroup
 	for j := 0; j < len(servers); j++ {
-		// if no request go to this server, skip
+		// if no request goes to this server, skip
 		serverReqs := serverReqMap[j]
+		serverRespMap[j] = make([]serverResp, 0)
 		if len(serverReqs) == 0 {
 			continue
 		}
 		// prepare the request
 		serverEndpoint := fmt.Sprintf("http://%s:%d/set", servers[j].IP, servers[j].Port)
 		httpReq := compositeServerReq(serverEndpoint, serverReqs)
-		serverRespMap[j] = make([]serverResp, 0)
 		// wait and request
 		wg.Add(1)
 		go makeServerReq(httpReq, &serverRespMap, j)
@@ -157,13 +162,38 @@ func handleSet(w http.ResponseWriter, r *http.Request) {
 	wg.Wait()
 
 	// TODO: massage serverRespMap, stringify it and respond
-
-	handleSuccess(w, r, []byte("haha"), 200) // TODO: handle partial content
+	output, code := massageSetOutput(&serverRespMap)
+	handleSuccess(w, r, output, code) // TODO: handle partial content
 }
 
 /*
-* Utility functions
+ * Utility functions
  */
+
+func massageSetOutput(sRespMap *map[int][]serverResp) ([]byte, int) {
+	code := 200
+	count := 0
+	failedKeys := make([]string, 0)
+	for j := 0; j < len(servers); j++ {
+		curServerResps := (*sRespMap)[j]
+		for _, s := range curServerResps {
+			if s.Status == false {
+				failedKeys = append(failedKeys, s.Key)
+			} else {
+				count++
+			}
+		}
+	}
+	if len(failedKeys) > 0 {
+		code = 206
+	}
+	output := clientSetResp{keys_added: count, keys_failed: failedKeys}
+	body, err := json.Marshal(output)
+	if err != nil {
+		return nil, 500
+	}
+	return body, code
+}
 
 func handleSuccess(w http.ResponseWriter, r *http.Request, reply []byte, code int) {
 	w.Header().Set("Content-Type", "application/json")
