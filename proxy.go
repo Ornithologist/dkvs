@@ -20,11 +20,6 @@ type errorResp struct {
 	Message string
 }
 
-type serverKeyValuePair struct {
-	Key string
-	Value string
-}
-
 type keyValuePair struct {
 	Key string
 	Value string
@@ -35,16 +30,16 @@ type clientReq struct {
 	Data string
 }
 
-type setReqStruct struct {
+type clientSetReq struct {
 	Key clientReq
 	Value clientReq
 }
 
-type fetchReqStruct struct {
+type clientFetchReq struct {
 	Key clientReq
 }
 
-type queryReqStruct struct {
+type clientQueryReq struct {
 	Key clientReq
 }
 
@@ -110,12 +105,12 @@ func handleSet(w http.ResponseWriter, r *http.Request) {
     if readErr != nil {
         log.Fatal(readErr)
 	}
-	var setReqs []setReqStruct
+	var setReqs []clientSetReq
 	json.Unmarshal(body, &setReqs)
 
 	// massage the body
 	isValid := true
-	serverReqMap := make(map[int][]serverKeyValuePair)
+	serverReqMap := make(map[int][]keyValuePair)
 	for i := 0; i < len(setReqs); i++ {
 		// get server index & validate the encoding
 		keyEncoding := setReqs[i].Key.Encoding
@@ -130,7 +125,7 @@ func handleSet(w http.ResponseWriter, r *http.Request) {
 		serverIdx := int(hash(keyValStr)) % len(servers)
 
 		// create and append server request
-		tmp := serverKeyValuePair{Key: keyValStr, Value: setReqs[i].Value.Data}
+		tmp := keyValuePair{Key: keyValStr, Value: setReqs[i].Value.Data}
 		serverReqMap[serverIdx] = append(serverReqMap[serverIdx], tmp)
 	}
 
@@ -152,11 +147,18 @@ func handleSet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// TODO: return status
+	handleSuccess(w, r, []byte("haha"), 200) // TODO: handle partial content
 }
 
 /*
 * Utility functions
 */
+
+func handleSuccess(w http.ResponseWriter, r *http.Request, reply []byte, code int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	w.Write(reply)
+}
 
 func handleError(w http.ResponseWriter, r *http.Request, errsp *errorResp) {
 	js, err := json.Marshal(errsp)
@@ -182,7 +184,7 @@ func makeServerReq(httpReq *http.Request) {
 	}
 }
 
-func compositeServerReq(endpoint string, kvPairs []serverKeyValuePair) (*http.Request) {
+func compositeServerReq(endpoint string, kvPairs []keyValuePair) (*http.Request) {
 	jsonStr, err := json.Marshal(&kvPairs)
     if err != nil {
         fmt.Println(err)
@@ -197,9 +199,9 @@ func compositeServerReq(endpoint string, kvPairs []serverKeyValuePair) (*http.Re
 }
 
 func binToStr(s string) (string, bool) {
-	// TODO: add validation logic | is it really needed?
+	// TODO: add validation for malformed binary | is it really needed?
 	realStr := base64.StdEncoding.EncodeToString([]byte(s))
-	return realStr, false
+	return realStr, true
 }
 
 func hash(s string) uint32 {
@@ -217,20 +219,20 @@ func loadServers() {
 	json.Unmarshal(file, &servers)
 }
 
-func loadSetRequest(jsonBytes []byte) []setReqStruct {
-	var setReqs []setReqStruct
+func loadSetRequest(jsonBytes []byte) []clientSetReq {
+	var setReqs []clientSetReq
 	json.Unmarshal(jsonBytes, &setReqs)
 	return setReqs;
 }
 
-func loadFetchRequest(jsonBytes []byte) []fetchReqStruct {
-	var fetchReqs []fetchReqStruct
+func loadFetchRequest(jsonBytes []byte) []clientFetchReq {
+	var fetchReqs []clientFetchReq
 	json.Unmarshal(jsonBytes, &fetchReqs)
 	return fetchReqs;
 }
 
-func loadQueryRequest(jsonBytes []byte) []queryReqStruct {
-	var queryReqs []queryReqStruct
+func loadQueryRequest(jsonBytes []byte) []clientQueryReq {
+	var queryReqs []clientQueryReq
 	json.Unmarshal(jsonBytes, &queryReqs)
 	return queryReqs;
 }
