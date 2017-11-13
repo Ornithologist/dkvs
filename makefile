@@ -19,4 +19,4 @@ check: proxy
 	./proxy
 
 dist:
-	dir=`basename $$PWD`; cd ..; tar cvf $$dir.tar ./$$dir; gzip $$dir.tar 
+	dir=`basename $$PWD`; cd ..; tar cvf $$dir.tar --exclude ./$$dir/.git ./$$dir; gzip $$dir.tar 

@@ -1,37 +1,48 @@
 package main
 
 import (
-	"fmt"
-	"os"
-	"log"
 	"bytes"
+	"fmt"
+	"log"
+	"os"
+	"sync"
 	// "reflect"
 	// "strings"
-	"net/url"
-    "net/http"
-	"hash/fnv"
-    "io/ioutil"
-	"encoding/json"
 	"encoding/base64"
+	"encoding/json"
+	"hash/fnv"
+	"io/ioutil"
+	"net/http"
+	"net/url"
 )
 
+type server struct {
+	IP   string
+	Port int
+}
+
 type errorResp struct {
-	Code int
+	Code    int
 	Message string
 }
 
+type serverResp struct {
+	Key    string
+	Status bool
+}
+
 type keyValuePair struct {
-	Key string
+	Key   string
 	Value string
 }
 
 type clientReq struct {
 	Encoding string
-	Data string
+	Data     string
 }
 
 type clientSetReq struct {
-	Key clientReq
+	Key   clientReq
 	Value clientReq
 }
 
@@ -41,11 +52,6 @@ type clientFetchReq struct {
 
 type clientQueryReq struct {
 	Key clientReq
-}
-
-type server struct {
-	Ip string
-    Port  int
 }
 
 var servers []server
@@ -72,20 +78,20 @@ func handleFetch(w http.ResponseWriter, r *http.Request) {
 	hash := int(hash(key))
 	serverIdx := hash % size
 	myServer := servers[serverIdx]
-	
+
 	// call the server and extract result
-	myUrl := fmt.Sprintf("http://%s:%d/fetch?key=%s", myServer.Ip, myServer.Port, key)
-	resp, err := http.Get(myUrl)
-	
+	myURL := fmt.Sprintf("http://%s:%d/fetch?key=%s", myServer.IP, myServer.Port, key)
+	resp, err := http.Get(myURL)
+
 	if err != nil {
 		fmt.Printf("%s\n", err)
 		os.Exit(1)
 	}
 
 	body, readErr := ioutil.ReadAll(resp.Body)
-    if readErr != nil {
-        log.Fatal(readErr)
-    }
+	if readErr != nil {
+		log.Fatal(readErr)
+	}
 
 	var result []keyValuePair
 	json.Unmarshal(body, &result)
@@ -101,12 +107,8 @@ func handleQuery(w http.ResponseWriter, r *http.Request) {
 
 func handleSet(w http.ResponseWriter, r *http.Request) {
 	// extract the key value pairs
-	body, readErr := ioutil.ReadAll(r.Body)
-    if readErr != nil {
-        log.Fatal(readErr)
-	}
-	var setReqs []clientSetReq
-	json.Unmarshal(body, &setReqs)
+	body := loadReqBody(r)
+	setReqs := loadSetRequest(body)
 
 	// massage the body
 	isValid := true
@@ -117,10 +119,10 @@ func handleSet(w http.ResponseWriter, r *http.Request) {
 		keyVal := setReqs[i].Key.Data
 		keyValStr := keyVal
 		if keyEncoding == "binary" {
-			keyValStr, isValid = binToStr(keyValStr);
+			keyValStr, isValid = binToStr(keyValStr)
 		}
 		if !isValid {
-			break;
+			break
 		}
 		serverIdx := int(hash(keyValStr)) % len(servers)
 
@@ -131,28 +133,37 @@ func handleSet(w http.ResponseWriter, r *http.Request) {
 
 	// handle exception
 	if !isValid {
-		// TODO: return 4XX code here
 		handleError(w, r, &errorResp{Code: 405, Message: "Bad key encoding."})
 		return
 	}
 
 	// call the server(s) correspondingly
+	serverRespMap := make(map[int][]serverResp)
+	var wg sync.WaitGroup
 	for j := 0; j < len(servers); j++ {
+		// if no request go to this server, skip
 		serverReqs := serverReqMap[j]
+		if len(serverReqs) == 0 {
+			continue
+		}
 		// prepare the request
-		serverEndpoint := fmt.Sprintf("http://%s:%d/set", servers[j].Ip, servers[j].Port)
+		serverEndpoint := fmt.Sprintf("http://%s:%d/set", servers[j].IP, servers[j].Port)
 		httpReq := compositeServerReq(serverEndpoint, serverReqs)
-		go makeServerReq(httpReq)
-		// TODO: handle response merging
+		serverRespMap[j] = make([]serverResp, 0)
+		// wait and request
+		wg.Add(1)
+		go makeServerReq(httpReq, &serverRespMap, j)
 	}
+	wg.Wait()
 
-	// TODO: return status
+	// TODO: massage serverRespMap, stringify it and respond
+
 	handleSuccess(w, r, []byte("haha"), 200) // TODO: handle partial content
 }
 
 /*
 * Utility functions
-*/
+ */
 
 func handleSuccess(w http.ResponseWriter, r *http.Request, reply []byte, code int) {
 	w.Header().Set("Content-Type", "application/json")
@@ -163,7 +174,7 @@ func handleSuccess(w http.ResponseWriter, r *http.Request, reply []byte, code in
 func handleError(w http.ResponseWriter, r *http.Request, errsp *errorResp) {
 	js, err := json.Marshal(errsp)
 	if err != nil {
-	http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -171,8 +182,7 @@ func handleError(w http.ResponseWriter, r *http.Request, errsp *errorResp) {
 	w.Write(js)
 }
 
-func makeServerReq(httpReq *http.Request) {
-	// TODO: pass to response handler
+func makeServerReq(httpReq *http.Request, sRespMap *map[int][]serverResp, j int) {
 	if httpReq != nil {
 		httpReq.Header.Set("Content-Type", "application/json")
 		client := &http.Client{}
@@ -180,21 +190,25 @@ func makeServerReq(httpReq *http.Request) {
 		if err != nil {
 			panic(err)
 		}
+		// load the response and insert to sRespMap
+		body := loadRespBody(resp)
+		sresp := loadServerResp(body)
+		(*sRespMap)[j] = sresp
 		defer resp.Body.Close()
 	}
 }
 
-func compositeServerReq(endpoint string, kvPairs []keyValuePair) (*http.Request) {
+func compositeServerReq(endpoint string, kvPairs []keyValuePair) *http.Request {
 	jsonStr, err := json.Marshal(&kvPairs)
-    if err != nil {
-        fmt.Println(err)
-        return nil
-    }
+	if err != nil {
+		fmt.Println(err)
+		return nil
+	}
 	req, httpErr := http.NewRequest("POST", endpoint, bytes.NewBuffer(jsonStr))
 	if httpErr != nil {
-        fmt.Println(httpErr)
-        return nil
-    }
+		fmt.Println(httpErr)
+		return nil
+	}
 	return req
 }
 
@@ -219,26 +233,49 @@ func loadServers() {
 	json.Unmarshal(file, &servers)
 }
 
+func loadReqBody(r *http.Request) []byte {
+	body, readErr := ioutil.ReadAll(r.Body)
+	if readErr != nil {
+		log.Fatal(readErr)
+		return nil
+	}
+	return body
+}
+
+func loadRespBody(resp *http.Response) []byte {
+	body, readErr := ioutil.ReadAll(resp.Body)
+	if readErr != nil {
+		log.Fatal(readErr)
+	}
+	return body
+}
+
+func loadServerResp(jsonBytes []byte) []serverResp {
+	var serverResps []serverResp
+	json.Unmarshal(jsonBytes, &serverResps)
+	return serverResps
+}
+
 func loadSetRequest(jsonBytes []byte) []clientSetReq {
 	var setReqs []clientSetReq
 	json.Unmarshal(jsonBytes, &setReqs)
-	return setReqs;
+	return setReqs
 }
 
 func loadFetchRequest(jsonBytes []byte) []clientFetchReq {
 	var fetchReqs []clientFetchReq
 	json.Unmarshal(jsonBytes, &fetchReqs)
-	return fetchReqs;
+	return fetchReqs
 }
 
 func loadQueryRequest(jsonBytes []byte) []clientQueryReq {
 	var queryReqs []clientQueryReq
 	json.Unmarshal(jsonBytes, &queryReqs)
-	return queryReqs;
+	return queryReqs
 }
 
 func main() {
-	loadServers();
+	loadServers()
 	http.HandleFunc("/", handler)
 	err := http.ListenAndServe(":8080", nil)
 	if err != nil {
