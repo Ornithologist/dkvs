@@ -2,18 +2,16 @@ package main
 
 import (
 	"bytes"
-	"fmt"
-	"log"
-	"os"
-	"sync"
-	// "reflect"
-	// "strings"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"hash/fnv"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"net/url"
+	"os"
+	"sync"
 )
 
 type server struct {

@@ -3,6 +3,7 @@ import SocketServer
 import simplejson
 import cgi
 
+
 class Store:
     '''
     Store key and value pairs in a hashmap.
@@ -21,8 +22,9 @@ class Store:
         return None
 
     def set_value_by_key(self, key, value):
-        ''' sets the value using key '''
+        ''' sets the value using key, return success '''
         self.store[key] = value
+        return True
 
     def search_by_key(self, key):
         ''' checks if the key is in the store '''
@@ -44,18 +46,57 @@ class MyRequestHandler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header('Content-type', 'application/json')
         self.end_headers()
+    
+    def _do_set(self, req_body):
+        ''' loop through the body, load key and value pairs to store '''
+        # TODO: pre-check KeyError before doing set
+        code = 200
+        failed_keys = []
+        count = 0
+        try:
+            for kvp in req_body:
+                result = self.store.set_value_by_key(kvp["key"], kvp["value"])
+                if not result:
+                    failed_keys.append(kvp["key"])
+                else:
+                    count += 1
+        except TypeError:
+            return {"error": True, "message": "Bad request"}, 400
+        except KeyError:
+            return {"error": True, "message": "Bad request"}, 400
+        if count < len(req_body):
+            code = 206
+        return {"keys_added": count, "keys_failed": failed_keys}, code
 
-    @staticmethod
-    def _do_fetch(req_body):
-        return {"code": 400, "message": "Bad request"}, 400
+    def _do_fetch(self, req_body):
+        ''' loop through the body, get each value by key '''
+        output = [
+            {
+                "key": key,
+                "value": self.store.get_value_by_key(key)
+            }
+            for key in req_body
+        ]
+        code = 200
+        for kvp in output:
+            if kvp["value"] is None:
+                code = 206
+        return output, code
 
-    @staticmethod
-    def _do_set(req_body):
-        return {"code": 400, "message": "Bad request"}, 400
-
-    @staticmethod
-    def _do_query(req_body):
-        return {"code": 400, "message": "Bad request"}, 400
+    def _do_query(self, req_body):
+        ''' loop through the body, check key existence '''
+        output = [
+            {
+                "key": key,
+                "value": self.store.search_by_key(key)
+            }
+            for key in req_body
+        ]
+        code = 200
+        for kvp in output:
+            if not kvp["value"]:
+                code = 206
+        return output, code
 
     def do_HEAD(self):
         self._set_headers()
