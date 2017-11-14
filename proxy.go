@@ -9,10 +9,17 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"sync"
 )
+
+const success int = 200
+const partialSuccess int = 206
+const clientError int = 405
+const serverError int = 500
+const serverConfig string = "servers.json"
+
+type massage func([]*http.Response) ([]byte, int)
 
 type server struct {
 	IP   string
@@ -24,9 +31,19 @@ type errorResp struct {
 	Message string
 }
 
-type serverResp struct {
-	Key    string
-	Status bool
+type serverSetResp struct {
+	KeysAdded  int      `json:"keys_added"`
+	KeysFailed []string `json:"keys_failed"`
+}
+
+type serverFetchResp struct {
+	Key   string `json:"key"`
+	Value bool   `json:"value"`
+}
+
+type serverQueryResp struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
 }
 
 type keyValuePair struct {
@@ -52,11 +69,6 @@ type clientQueryReq struct {
 	Key clientReq
 }
 
-type clientSetResp struct {
-	keys_added  int
-	keys_failed []string
-}
-
 var servers []server
 
 func handler(w http.ResponseWriter, r *http.Request) {
@@ -72,40 +84,102 @@ func handler(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleFetch(w http.ResponseWriter, r *http.Request) {
-	// single fetch logic
-	m, _ := url.ParseQuery(r.URL.RawQuery)
-	key := m["key"][0]
+	// extract the key value pairs
+	body := loadReqBody(r)
+	queryReqs := loadFetchRequest(body)
 
-	// dummy hash logic
-	size := len(servers)
-	hash := int(hash(key))
-	serverIdx := hash % size
-	myServer := servers[serverIdx]
-
-	// call the server and extract result
-	myURL := fmt.Sprintf("http://%s:%d/fetch?key=%s", myServer.IP, myServer.Port, key)
-	resp, err := http.Get(myURL)
-
-	if err != nil {
-		fmt.Printf("%s\n", err)
-		os.Exit(1)
+	// massage the body
+	isValid := true
+	serverReqMap := make(map[int][]string)
+	for i := 0; i < len(queryReqs); i++ {
+		// get server index & validate the encoding
+		keyEncoding := queryReqs[i].Key.Encoding
+		keyVal := queryReqs[i].Key.Data
+		keyValStr := keyVal
+		if keyEncoding == "binary" {
+			keyValStr, isValid = binToStr(keyValStr)
+		}
+		if !isValid {
+			break
+		}
+		serverIdx := int(hash(keyValStr)) % len(servers)
+		// create and append server request
+		serverReqMap[serverIdx] = append(serverReqMap[serverIdx], keyValStr)
 	}
 
-	body, readErr := ioutil.ReadAll(resp.Body)
-	if readErr != nil {
-		log.Fatal(readErr)
+	// handle exception
+	if !isValid {
+		handleError(w, r, &errorResp{Code: clientError, Message: "Bad key encoding."})
+		return
 	}
 
-	var result []keyValuePair
-	json.Unmarshal(body, &result)
-	fmt.Printf("%+v\n", result)
+	// assemble the requests (one per server)
+	reqs := make([]*http.Request, 0)
+	for j := 0; j < len(servers); j++ {
+		// if no request goes to this server, skip
+		serverReqs := serverReqMap[j]
+		if len(serverReqs) == 0 {
+			continue
+		}
+		// prepare the request
+		serverEndpoint := fmt.Sprintf("http://%s:%d/fetch", servers[j].IP, servers[j].Port)
+		httpReq := compositeServerReq(serverEndpoint, serverReqs)
+		reqs = append(reqs, httpReq)
+	}
 
-	// TODO: return the server response to the client
-
+	// send request, wait, massage, and sent response to client
+	output, code := sendRequestsAndMassage(reqs, massageFetch)
+	handleSuccess(w, r, output, code)
 }
 
 func handleQuery(w http.ResponseWriter, r *http.Request) {
-	// TODO: do something
+	// extract the key value pairs
+	body := loadReqBody(r)
+	queryReqs := loadQueryRequest(body)
+
+	// massage the body
+	isValid := true
+	serverReqMap := make(map[int][]string)
+	for i := 0; i < len(queryReqs); i++ {
+		// get server index & validate the encoding
+		keyEncoding := queryReqs[i].Key.Encoding
+		keyVal := queryReqs[i].Key.Data
+		keyValStr := keyVal
+		if keyEncoding == "binary" {
+			keyValStr, isValid = binToStr(keyValStr)
+		}
+		if !isValid {
+			break
+		}
+		serverIdx := int(hash(keyValStr)) % len(servers)
+
+		// create and append server request
+		serverReqMap[serverIdx] = append(serverReqMap[serverIdx], keyValStr)
+	}
+
+	// handle exception
+	if !isValid {
+		handleError(w, r, &errorResp{Code: clientError, Message: "Bad key encoding."})
+		return
+	}
+
+	// assemble the requests (one per server)
+	reqs := make([]*http.Request, 0)
+	for j := 0; j < len(servers); j++ {
+		// if no request goes to this server, skip
+		serverReqs := serverReqMap[j]
+		if len(serverReqs) == 0 {
+			continue
+		}
+		// prepare the request
+		serverEndpoint := fmt.Sprintf("http://%s:%d/query", servers[j].IP, servers[j].Port)
+		httpReq := compositeServerReq(serverEndpoint, serverReqs)
+		reqs = append(reqs, httpReq)
+	}
+
+	// send request, wait, massage, and sent response to client
+	output, code := sendRequestsAndMassage(reqs, massageQuery)
+	handleSuccess(w, r, output, code)
 }
 
 func handleSet(w http.ResponseWriter, r *http.Request) {
@@ -136,61 +210,145 @@ func handleSet(w http.ResponseWriter, r *http.Request) {
 
 	// handle exception
 	if !isValid {
-		handleError(w, r, &errorResp{Code: 405, Message: "Bad key encoding."})
+		handleError(w, r, &errorResp{Code: clientError, Message: "Bad key encoding."})
 		return
 	}
 
-	// call the server(s) correspondingly
-	serverRespMap := make(map[int][]serverResp)
-	var wg sync.WaitGroup
+	// assemble the requests (one per server)
+	reqs := make([]*http.Request, 0)
 	for j := 0; j < len(servers); j++ {
 		// if no request goes to this server, skip
 		serverReqs := serverReqMap[j]
-		serverRespMap[j] = make([]serverResp, 0)
 		if len(serverReqs) == 0 {
 			continue
 		}
 		// prepare the request
 		serverEndpoint := fmt.Sprintf("http://%s:%d/set", servers[j].IP, servers[j].Port)
 		httpReq := compositeServerReq(serverEndpoint, serverReqs)
-		// wait and request
-		wg.Add(1)
-		go makeServerReq(httpReq, &serverRespMap, j)
+		reqs = append(reqs, httpReq)
 	}
-	wg.Wait()
 
-	// TODO: massage serverRespMap, stringify it and respond
-	output, code := massageSetOutput(&serverRespMap)
-	handleSuccess(w, r, output, code) // TODO: handle partial content
+	// send request, wait, massage, and sent response to client
+	output, code := sendRequestsAndMassage(reqs, massageSet)
+	handleSuccess(w, r, output, code)
 }
 
 /*
  * Utility functions
  */
-
-func massageSetOutput(sRespMap *map[int][]serverResp) ([]byte, int) {
-	code := 200
-	count := 0
-	failedKeys := make([]string, 0)
-	for j := 0; j < len(servers); j++ {
-		curServerResps := (*sRespMap)[j]
-		for _, s := range curServerResps {
-			if s.Status == false {
-				failedKeys = append(failedKeys, s.Key)
-			} else {
-				count++
+func massageFetch(resps []*http.Response) ([]byte, int) {
+	final := make([]serverFetchResp, 0)
+	code := success
+	// aggregate
+	for _, response := range resps {
+		if response.StatusCode >= success {
+			body := loadRespBody(response)
+			sresp := loadServerFetchResp(body)
+			// spread operator indicates list of arguments
+			final = append(final, sresp...)
+			// one server partial => all partial
+			if response.StatusCode == partialSuccess {
+				code = partialSuccess
 			}
+		} else {
+			code = partialSuccess // TODO: wrong(!) shouldn't it return failure ?
 		}
+		response.Body.Close()
 	}
-	if len(failedKeys) > 0 {
-		code = 206
-	}
-	output := clientSetResp{keys_added: count, keys_failed: failedKeys}
-	body, err := json.Marshal(output)
+	body, err := json.Marshal(final)
 	if err != nil {
-		return nil, 500
+		return nil, serverError
 	}
 	return body, code
+}
+
+func massageQuery(resps []*http.Response) ([]byte, int) {
+	final := make([]serverQueryResp, 0)
+	code := success
+	// aggregate
+	for _, response := range resps {
+		if response.StatusCode >= success {
+			body := loadRespBody(response)
+			sresp := loadServerQueryResp(body)
+			// spread operator indicates list of arguments
+			final = append(final, sresp...)
+			// one server partial => all partial
+			if response.StatusCode == partialSuccess {
+				code = partialSuccess
+			}
+		} else {
+			code = partialSuccess // TODO: wrong(!) shouldn't it return failure ?
+		}
+		response.Body.Close()
+	}
+	body, err := json.Marshal(final)
+	if err != nil {
+		return nil, serverError
+	}
+	return body, code
+}
+
+func massageSet(resps []*http.Response) ([]byte, int) {
+	keysFailed := make([]string, 0)
+	keysAdded := 0
+	code := success
+	// aggregate
+	for _, response := range resps {
+		if response.StatusCode >= success {
+			body := loadRespBody(response)
+			sresp := loadServerSetResp(body)
+			keysAdded += sresp.KeysAdded
+			// spread operator indicates list of arguments
+			keysFailed = append(keysFailed, sresp.KeysFailed...)
+		} else {
+			code = partialSuccess // TODO: wrong(!) shouldn't it return failure ?
+		}
+		response.Body.Close()
+	}
+	// final check
+	final := serverSetResp{KeysAdded: keysAdded, KeysFailed: keysFailed}
+	if len(keysFailed) > 0 {
+		code = partialSuccess
+	}
+	body, err := json.Marshal(final)
+	if err != nil {
+		return nil, serverError
+	}
+	return body, code
+}
+
+func sendRequestsAndMassage(reqs []*http.Request, fn massage) ([]byte, int) {
+	// create wait group, channel, and response slice
+	var wg sync.WaitGroup
+	wg.Add(len(reqs))
+	respsChan := make(chan *http.Response)
+	resps := make([]*http.Response, 0)
+
+	// shoot the requests
+	for _, curReq := range reqs {
+		go func(curReq *http.Request) {
+			defer wg.Done()
+			curReq.Header.Set("Content-Type", "application/json")
+			client := &http.Client{}
+			resp, err := client.Do(curReq)
+			if err != nil {
+				panic(err)
+			} else {
+				respsChan <- resp
+			}
+		}(curReq)
+	}
+
+	// collect responses to resps
+	go func() {
+		for response := range respsChan {
+			resps = append(resps, response)
+		}
+	}()
+	wg.Wait()
+
+	// trigger massager
+	return fn(resps)
 }
 
 func handleSuccess(w http.ResponseWriter, r *http.Request, reply []byte, code int) {
@@ -210,24 +368,8 @@ func handleError(w http.ResponseWriter, r *http.Request, errsp *errorResp) {
 	w.Write(js)
 }
 
-func makeServerReq(httpReq *http.Request, sRespMap *map[int][]serverResp, j int) {
-	if httpReq != nil {
-		httpReq.Header.Set("Content-Type", "application/json")
-		client := &http.Client{}
-		resp, err := client.Do(httpReq)
-		if err != nil {
-			panic(err)
-		}
-		// load the response and insert to sRespMap
-		body := loadRespBody(resp)
-		sresp := loadServerResp(body)
-		(*sRespMap)[j] = sresp
-		defer resp.Body.Close()
-	}
-}
-
-func compositeServerReq(endpoint string, kvPairs []keyValuePair) *http.Request {
-	jsonStr, err := json.Marshal(&kvPairs)
+func compositeServerReq(endpoint string, reqBody interface{}) *http.Request {
+	jsonStr, err := json.Marshal(&reqBody)
 	if err != nil {
 		fmt.Println(err)
 		return nil
@@ -253,7 +395,7 @@ func hash(s string) uint32 {
 }
 
 func loadServers() {
-	file, e := ioutil.ReadFile("servers.json")
+	file, e := ioutil.ReadFile(serverConfig)
 	if e != nil {
 		fmt.Printf("File error: %v\n", e)
 		os.Exit(1)
@@ -278,10 +420,22 @@ func loadRespBody(resp *http.Response) []byte {
 	return body
 }
 
-func loadServerResp(jsonBytes []byte) []serverResp {
-	var serverResps []serverResp
-	json.Unmarshal(jsonBytes, &serverResps)
-	return serverResps
+func loadServerSetResp(jsonBytes []byte) serverSetResp {
+	var resps serverSetResp
+	json.Unmarshal(jsonBytes, &resps)
+	return resps
+}
+
+func loadServerQueryResp(jsonBytes []byte) []serverQueryResp {
+	var resps []serverQueryResp
+	json.Unmarshal(jsonBytes, &resps)
+	return resps
+}
+
+func loadServerFetchResp(jsonBytes []byte) []serverFetchResp {
+	var resps []serverFetchResp
+	json.Unmarshal(jsonBytes, &resps)
+	return resps
 }
 
 func loadSetRequest(jsonBytes []byte) []clientSetReq {

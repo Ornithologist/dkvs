@@ -127,6 +127,8 @@ class MyRequestHandler(BaseHTTPRequestHandler):
         length = int(self.headers.getheader('content-length'))
         req_body = simplejson.loads(self.rfile.read(length))
 
+        print req_body
+
         # handle different endpoints
         if self.path == '/set':
             message, code = self._do_set(req_body)
