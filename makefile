@@ -16,7 +16,8 @@ proxy: proxy.go
 	$(CC) $(CFLAGS) $< -c -o $@
 
 check: proxy
-	./proxy
+	./proxy &
+	./run_servers.sh &
 
 dist:
 	dir=`basename $$PWD`; cd ..; tar cvf $$dir.tar --exclude ./$$dir/.git ./$$dir; gzip $$dir.tar 
