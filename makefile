@@ -16,6 +16,7 @@ proxy: proxy.go
 	$(CC) $(CFLAGS) $< -c -o $@
 
 check: proxy
+	pip install simplejson;
 	./proxy &
 	./run_servers.sh &
 
