@@ -22,51 +22,52 @@ const serverConfig string = "servers.json"
 type massage func([]*http.Response) ([]byte, int)
 
 type server struct {
-	IP   string
-	Port int
+	IP   string `json:"ip"`
+	Port int    `json:"port"`
 }
 
 type errorResp struct {
-	Code    int
-	Message string
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+// Encoded - base struct used in all requests and responses
+type Encoded struct {
+	Encoding string `json:"encoding"`
+	Data     string `json:"data"`
 }
 
 type serverSetResp struct {
-	KeysAdded  int      `json:"keys_added"`
-	KeysFailed []string `json:"keys_failed"`
+	KeysAdded  int       `json:"keys_added"`
+	KeysFailed []Encoded `json:"keys_failed"`
 }
 
 type serverFetchResp struct {
-	Key   string `json:"key"`
-	Value bool   `json:"value"`
+	Key   Encoded  `json:"key"`
+	Value *Encoded `json:"value"`
 }
 
 type serverQueryResp struct {
+	Key   Encoded `json:"key"`
+	Value bool    `json:"value"`
+}
+
+type keyValuePair struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
 }
 
-type keyValuePair struct {
-	Key   string
-	Value string
-}
-
-type clientReq struct {
-	Encoding string
-	Data     string
-}
-
 type clientSetReq struct {
-	Key   clientReq
-	Value clientReq
+	Key   Encoded `json:"key"`
+	Value Encoded `json:"value"`
 }
 
 type clientFetchReq struct {
-	Key clientReq
+	Key Encoded `json:"key"`
 }
 
 type clientQueryReq struct {
-	Key clientReq
+	Key Encoded `json:"key"`
 }
 
 var servers []server
@@ -90,7 +91,7 @@ func handleFetch(w http.ResponseWriter, r *http.Request) {
 
 	// massage the body
 	isValid := true
-	serverReqMap := make(map[int][]string)
+	serverReqMap := make(map[int][]Encoded)
 	for i := 0; i < len(queryReqs); i++ {
 		// get server index & validate the encoding
 		keyEncoding := queryReqs[i].Key.Encoding
@@ -104,7 +105,7 @@ func handleFetch(w http.ResponseWriter, r *http.Request) {
 		}
 		serverIdx := int(hash(keyValStr)) % len(servers)
 		// create and append server request
-		serverReqMap[serverIdx] = append(serverReqMap[serverIdx], keyValStr)
+		serverReqMap[serverIdx] = append(serverReqMap[serverIdx], queryReqs[i].Key)
 	}
 
 	// handle exception
@@ -139,7 +140,7 @@ func handleQuery(w http.ResponseWriter, r *http.Request) {
 
 	// massage the body
 	isValid := true
-	serverReqMap := make(map[int][]string)
+	serverReqMap := make(map[int][]Encoded)
 	for i := 0; i < len(queryReqs); i++ {
 		// get server index & validate the encoding
 		keyEncoding := queryReqs[i].Key.Encoding
@@ -152,9 +153,8 @@ func handleQuery(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		serverIdx := int(hash(keyValStr)) % len(servers)
-
 		// create and append server request
-		serverReqMap[serverIdx] = append(serverReqMap[serverIdx], keyValStr)
+		serverReqMap[serverIdx] = append(serverReqMap[serverIdx], queryReqs[i].Key)
 	}
 
 	// handle exception
@@ -189,7 +189,7 @@ func handleSet(w http.ResponseWriter, r *http.Request) {
 
 	// massage the body
 	isValid := true
-	serverReqMap := make(map[int][]keyValuePair)
+	serverReqMap := make(map[int][]clientSetReq)
 	for i := 0; i < len(setReqs); i++ {
 		// get server index & validate the encoding
 		keyEncoding := setReqs[i].Key.Encoding
@@ -203,9 +203,8 @@ func handleSet(w http.ResponseWriter, r *http.Request) {
 		}
 		serverIdx := int(hash(keyValStr)) % len(servers)
 
-		// create and append server request
-		tmp := keyValuePair{Key: keyValStr, Value: setReqs[i].Value.Data}
-		serverReqMap[serverIdx] = append(serverReqMap[serverIdx], tmp)
+		// append server request
+		serverReqMap[serverIdx] = append(serverReqMap[serverIdx], setReqs[i])
 	}
 
 	// handle exception
@@ -289,7 +288,7 @@ func massageQuery(resps []*http.Response) ([]byte, int) {
 }
 
 func massageSet(resps []*http.Response) ([]byte, int) {
-	keysFailed := make([]string, 0)
+	keysFailed := make([]Encoded, 0)
 	keysAdded := 0
 	code := success
 	// aggregate
@@ -318,13 +317,13 @@ func massageSet(resps []*http.Response) ([]byte, int) {
 }
 
 func sendRequestsAndMassage(reqs []*http.Request, fn massage) ([]byte, int) {
-	// create wait group, channel, and response slice
+	// create mutext lock, wait group, and response slice
+	var mutex = &sync.Mutex{}
 	var wg sync.WaitGroup
-	wg.Add(len(reqs))
-	respsChan := make(chan *http.Response)
 	resps := make([]*http.Response, 0)
 
 	// shoot the requests
+	wg.Add(len(reqs))
 	for _, curReq := range reqs {
 		go func(curReq *http.Request) {
 			defer wg.Done()
@@ -334,17 +333,12 @@ func sendRequestsAndMassage(reqs []*http.Request, fn massage) ([]byte, int) {
 			if err != nil {
 				panic(err)
 			} else {
-				respsChan <- resp
+				mutex.Lock()
+				resps = append(resps, resp)
+				mutex.Unlock()
 			}
 		}(curReq)
 	}
-
-	// collect responses to resps
-	go func() {
-		for response := range respsChan {
-			resps = append(resps, response)
-		}
-	}()
 	wg.Wait()
 
 	// trigger massager
@@ -375,6 +369,7 @@ func compositeServerReq(endpoint string, reqBody interface{}) *http.Request {
 		return nil
 	}
 	req, httpErr := http.NewRequest("POST", endpoint, bytes.NewBuffer(jsonStr))
+	fmt.Println(string(jsonStr))
 	if httpErr != nil {
 		fmt.Println(httpErr)
 		return nil
