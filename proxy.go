@@ -252,7 +252,7 @@ func handleSet(w http.ResponseWriter, r *http.Request) {
 }
 
 /*
- * Utility functions
+ * Life cycle functions
  */
 func massageFetch(resps []*http.Response) ([]byte, int) {
 	final := make([]serverFetchResp, 0)
@@ -395,6 +395,10 @@ func compositeServerReq(endpoint string, reqBody interface{}, method string) *ht
 	return req
 }
 
+/*
+ * Utility functions
+ */
+
 func binToStr(s string) (string, bool) {
 	// TODO: add validation for malformed binary | is it really needed?
 	realStr := base64.StdEncoding.EncodeToString([]byte(s))
@@ -408,12 +412,24 @@ func hash(s string) uint32 {
 }
 
 func loadServers() {
-	file, e := ioutil.ReadFile(serverConfig)
-	if e != nil {
-		fmt.Printf("File error: %v\n", e)
-		os.Exit(1)
+	args := os.Args[1:]
+	if len(args) == 0 {
+		fmt.Println("Loading server list from file...")
+		file, e := ioutil.ReadFile(serverConfig)
+		if e != nil {
+			fmt.Printf("File error: %v\n", e)
+			os.Exit(1)
+		}
+		json.Unmarshal(file, &servers)
+	} else {
+		fmt.Println("Loading server list from command line...")
+		for _, arg := range args {
+			ip := ""
+			port := 0
+			fmt.Sscanf(arg, "%s:%d", &ip, &port)
+			servers = append(servers, server{IP: ip, Port: port})
+		}
 	}
-	json.Unmarshal(file, &servers)
 }
 
 func loadReqBody(r *http.Request) []byte {
