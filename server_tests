@@ -1,8 +1,0 @@
-curl -v -H "Content-Type: application/json" -X PUT -d '[ { "key": "1001", "value": "haha" }, { "key": "test", "value": "tome" }, { "key": "john", "value": "hola" }, { "key": "micky", "value": "lane" } ]' http://localhost:5000/set
-
-curl -v -H "Content-Type: application/json" -X POST -d '[ "1001", "test", "none-exist", "john" ]' http://localhost:5000/fetch
-
-curl -v -H "Content-Type: application/json" -X POST -d '[ "1001", "test", "none-exist", "john" ]' http://localhost:5000/
-
-curl -v "http://localhost:8080/fetch"
-
