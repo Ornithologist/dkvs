@@ -74,14 +74,33 @@ var servers []server
 
 func handler(w http.ResponseWriter, r *http.Request) {
 	endpoint := r.URL.Path
-	switch endpoint {
-	case "/fetch":
+	method := r.Method
+	if method == http.MethodGet && endpoint == "/fetch" {
+		handleFetchAll(w, r)
+	} else if method == http.MethodPost && endpoint == "/fetch" {
 		handleFetch(w, r)
-	case "/query":
+	} else if method == http.MethodPost && endpoint == "/query" {
 		handleQuery(w, r)
-	case "/set":
+	} else if method == http.MethodPut && endpoint == "/set" {
 		handleSet(w, r)
+	} else {
+		handleError(w, r, &errorResp{Code: clientError, Message: "Request not found."})
 	}
+}
+
+func handleFetchAll(w http.ResponseWriter, r *http.Request) {
+	// assemble the requests (one per server)
+	reqs := make([]*http.Request, 0)
+	for j := 0; j < len(servers); j++ {
+		// prepare the request
+		serverEndpoint := fmt.Sprintf("http://%s:%d/fetch", servers[j].IP, servers[j].Port)
+		httpReq := compositeServerReq(serverEndpoint, nil, http.MethodGet)
+		reqs = append(reqs, httpReq)
+	}
+
+	// send request, wait, massage, and sent response to client
+	output, code := sendRequestsAndMassage(reqs, massageFetch)
+	handleSuccess(w, r, output, code)
 }
 
 func handleFetch(w http.ResponseWriter, r *http.Request) {
@@ -124,7 +143,7 @@ func handleFetch(w http.ResponseWriter, r *http.Request) {
 		}
 		// prepare the request
 		serverEndpoint := fmt.Sprintf("http://%s:%d/fetch", servers[j].IP, servers[j].Port)
-		httpReq := compositeServerReq(serverEndpoint, serverReqs)
+		httpReq := compositeServerReq(serverEndpoint, serverReqs, http.MethodPost)
 		reqs = append(reqs, httpReq)
 	}
 
@@ -173,7 +192,7 @@ func handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 		// prepare the request
 		serverEndpoint := fmt.Sprintf("http://%s:%d/query", servers[j].IP, servers[j].Port)
-		httpReq := compositeServerReq(serverEndpoint, serverReqs)
+		httpReq := compositeServerReq(serverEndpoint, serverReqs, http.MethodPost)
 		reqs = append(reqs, httpReq)
 	}
 
@@ -223,7 +242,7 @@ func handleSet(w http.ResponseWriter, r *http.Request) {
 		}
 		// prepare the request
 		serverEndpoint := fmt.Sprintf("http://%s:%d/set", servers[j].IP, servers[j].Port)
-		httpReq := compositeServerReq(serverEndpoint, serverReqs)
+		httpReq := compositeServerReq(serverEndpoint, serverReqs, http.MethodPut)
 		reqs = append(reqs, httpReq)
 	}
 
@@ -362,14 +381,13 @@ func handleError(w http.ResponseWriter, r *http.Request, errsp *errorResp) {
 	w.Write(js)
 }
 
-func compositeServerReq(endpoint string, reqBody interface{}) *http.Request {
+func compositeServerReq(endpoint string, reqBody interface{}, method string) *http.Request {
 	jsonStr, err := json.Marshal(&reqBody)
 	if err != nil {
 		fmt.Println(err)
 		return nil
 	}
-	req, httpErr := http.NewRequest("POST", endpoint, bytes.NewBuffer(jsonStr))
-	fmt.Println(string(jsonStr))
+	req, httpErr := http.NewRequest(method, endpoint, bytes.NewBuffer(jsonStr))
 	if httpErr != nil {
 		fmt.Println(httpErr)
 		return nil

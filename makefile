@@ -7,7 +7,7 @@ all: check
 default: check
 
 clean:
-	rm -rf *.o size size.dat size.png
+	rm -rf *.o proxy
 
 proxy: proxy.go
 	$(GO) proxy.go
