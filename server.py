@@ -1,6 +1,6 @@
 from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
 import SocketServer
-import simplejson
+import json
 import cgi
 
 
@@ -29,9 +29,8 @@ class Store:
 
     def get_all(self):
         ''' returns all key value pairs '''
-        key_types = ["binary", "string"]
         output = []
-        for kyt in key_types:
+        for kyt in self.store:
             for key, value in self.store[kyt].iteritems():
                 cur = {
                     "key": {
@@ -142,7 +141,7 @@ class MyRequestHandler(BaseHTTPRequestHandler):
             message, code = self._do_fetch_all()
         # send response
         self._set_headers(code)
-        self.wfile.write(simplejson.dumps(message))
+        self.wfile.write(json.dumps(message))
 
     # handles all PUT endpoints
     def do_PUT(self):
@@ -158,7 +157,7 @@ class MyRequestHandler(BaseHTTPRequestHandler):
 
         # read the req_body and convert it into a dictionary
         length = int(self.headers.getheader('content-length'))
-        req_body = simplejson.loads(self.rfile.read(length))
+        req_body = json.loads(self.rfile.read(length))
 
         # handle different endpoints
         if self.path == '/set':
@@ -170,7 +169,7 @@ class MyRequestHandler(BaseHTTPRequestHandler):
 
         # send response
         self._set_headers(code)
-        self.wfile.write(simplejson.dumps(message))
+        self.wfile.write(json.dumps(message))
 
     # handles all POST endpoints
     def do_POST(self):
@@ -186,7 +185,7 @@ class MyRequestHandler(BaseHTTPRequestHandler):
 
         # read the req_body and convert it into a dictionary
         length = int(self.headers.getheader('content-length'))
-        req_body = simplejson.loads(self.rfile.read(length))
+        req_body = json.loads(self.rfile.read(length))
 
         # handle different endpoints
         if self.path == '/set':
@@ -198,7 +197,7 @@ class MyRequestHandler(BaseHTTPRequestHandler):
 
         # send response
         self._set_headers(code)
-        self.wfile.write(simplejson.dumps(message))
+        self.wfile.write(json.dumps(message))
 
 
 class MyServer:

@@ -10,6 +10,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -52,21 +54,12 @@ type serverQueryResp struct {
 	Value bool    `json:"value"`
 }
 
-type keyValuePair struct {
-	Key   string `json:"key"`
-	Value string `json:"value"`
-}
-
 type clientSetReq struct {
 	Key   Encoded `json:"key"`
 	Value Encoded `json:"value"`
 }
 
-type clientFetchReq struct {
-	Key Encoded `json:"key"`
-}
-
-type clientQueryReq struct {
+type clientFetQueReq struct {
 	Key Encoded `json:"key"`
 }
 
@@ -106,7 +99,7 @@ func handleFetchAll(w http.ResponseWriter, r *http.Request) {
 func handleFetch(w http.ResponseWriter, r *http.Request) {
 	// extract the key value pairs
 	body := loadReqBody(r)
-	queryReqs := loadFetchRequest(body)
+	queryReqs := loadFetQueRequest(body)
 
 	// massage the body
 	isValid := true
@@ -155,7 +148,7 @@ func handleFetch(w http.ResponseWriter, r *http.Request) {
 func handleQuery(w http.ResponseWriter, r *http.Request) {
 	// extract the key value pairs
 	body := loadReqBody(r)
-	queryReqs := loadQueryRequest(body)
+	queryReqs := loadFetQueRequest(body)
 
 	// massage the body
 	isValid := true
@@ -400,7 +393,6 @@ func compositeServerReq(endpoint string, reqBody interface{}, method string) *ht
  */
 
 func binToStr(s string) (string, bool) {
-	// TODO: add validation for malformed binary | is it really needed?
 	realStr := base64.StdEncoding.EncodeToString([]byte(s))
 	return realStr, true
 }
@@ -424,9 +416,13 @@ func loadServers() {
 	} else {
 		fmt.Println("Loading server list from command line...")
 		for _, arg := range args {
-			ip := ""
-			port := 0
-			fmt.Sscanf(arg, "%s:%d", &ip, &port)
+			ip := strings.Split(arg, ":")[0]
+			port, err := strconv.Atoi(strings.Split(arg, ":")[1])
+			if err != nil {
+				fmt.Printf("Port number must be numeric: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("ip: %s, port: %d\n", ip, port)
 			servers = append(servers, server{IP: ip, Port: port})
 		}
 	}
@@ -473,16 +469,10 @@ func loadSetRequest(jsonBytes []byte) []clientSetReq {
 	return setReqs
 }
 
-func loadFetchRequest(jsonBytes []byte) []clientFetchReq {
-	var fetchReqs []clientFetchReq
-	json.Unmarshal(jsonBytes, &fetchReqs)
-	return fetchReqs
-}
-
-func loadQueryRequest(jsonBytes []byte) []clientQueryReq {
-	var queryReqs []clientQueryReq
-	json.Unmarshal(jsonBytes, &queryReqs)
-	return queryReqs
+func loadFetQueRequest(jsonBytes []byte) []clientFetQueReq {
+	var reqs []clientFetQueReq
+	json.Unmarshal(jsonBytes, &reqs)
+	return reqs
 }
 
 func main() {

@@ -2,18 +2,22 @@
 
 dkvs is a distributed key-value store implemented using Go and Python. Key value pairs are distributed across multiple nodes (called servers) by the proxy.
 
+## Author
+Rishab Khandelwal - khandelwal.r@husky.neu.edu
+Rongxuan Liu - liu.ron@husky.neu.edu
+
 ## Build & Run
 
 To build, do
 ```make proxy``` to make the proxy.
 
-You would need to have "simplejson" package in your Python environment. To do that, simply run 
-```pip install simplejson```.
+Ideally you will need Go version 1.9.2 and above to run this proxy server. If proxy is returnning error please upgrade your Go version to latest.
 
 To run the proxy, do
 ```./proxy``` to start the proxy using the pre-installed _servers.json_ configuration file.
 Or, if you want to specify specific IPs and Ports, do
 ```./proxy <ip:port> <ip:port> ...```.
+The proxy will run on port 8080.
 
 To run the server, do
 ```python server.py <port>```.
