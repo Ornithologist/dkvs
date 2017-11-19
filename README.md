@@ -11,20 +11,24 @@ Rongxuan Liu - liu.ron@husky.neu.edu
 To build, do
 ```make proxy``` to make the proxy.
 
-Ideally you will need Go version 1.9.2 and above to run this proxy server. If proxy is returnning error please upgrade your Go version to latest.
+Ideally you will need Go version 1.9.2 and above to run this proxy server. If proxy returns error, please upgrade your Go version to latest.
 
 To run the proxy, do
 ```./proxy``` to start the proxy using the pre-installed _servers.json_ configuration file.
-Or, if you want to specify specific IPs and Ports, do
+
+Or, if you want to specify specific IPs and Ports via command line, do
+
 ```./proxy <ip:port> <ip:port> ...```.
+
 The proxy will run on port 8080.
 
 To run the server, do
-```python server.py <port>```.
+```python server.py <port>``` with the same port number as specified when starting proxy.
 
 ## Design Overview
 
-Two types of encodings are supported by dkvs -- binary and string. Typically, a key or value can be represented by the following JSON format: 
+Two types of encodings are supported by dkvs -- binary and string. Typically, a key or value can be represented by the following JSON format:
+
 ```
 {
     "encoding": "string",
@@ -43,6 +47,7 @@ dkvs implements a RESTful API interface for fetching, setting, and querying.
 By making request to the http://localhost/fetch endpoint using GET, the client can retrieve *all* key-value pairs stored in the servers.
 
 The endpoint returns a JSON list in the following format:
+
 ```json
 [
     {
@@ -62,6 +67,7 @@ The endpoint returns a JSON list in the following format:
 ### POST fetch
 
 Similar to the [GET fetch](### GET fetch) endpoint, POST fetch returns a list of key-value pairs. It takes in a JSON list of keys from the request body, and returns corresponding values. The request body should follow the format below:
+
 ```json
 [
     {
@@ -79,6 +85,7 @@ For none existing keys, the "value" field in the response would be null. Were an
 ### POST query
 
 POST query has the same request interface as [POST fetch](### POST fetch):
+
 ```json
 [
     {
@@ -94,6 +101,7 @@ POST query has the same request interface as [POST fetch](### POST fetch):
 It returns true for the key that exists in the store, and false for the key that does not exist.
 
 Sample response:
+
 ```json
 [
     {
@@ -136,6 +144,7 @@ PUT set allows the client to send a list of key-value pairs and dkvs will insert
 The endpoind returns the number of keys that are successfully inserted/updated, and the keys that failed to update.
 
 Sample response:
+
 ```json
 [
     {
